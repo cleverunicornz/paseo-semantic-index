@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@cleverunicornz/semantic-index-engine",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "Kilo-derived semantic code indexing engine for Paseo",
+  "exports": {
+    ".": "./src/indexing/index.ts",
+    "./config": "./src/config.ts",
+    "./status": "./src/status.ts"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsup src/indexing/index.ts src/config.ts src/status.ts --format esm --dts --clean",
+    "clean": "rm -rf dist coverage",
+    "test": "vitest run",
+    "test:unit": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@qdrant/js-client-rest": "1.17.0",
+    "async-mutex": "0.5.0",
+    "chokidar": "4.0.3",
+    "glob": "13.0.6",
+    "ignore": "7.0.5",
+    "minimatch": "10.2.6",
+    "openai": "6.27.0",
+    "p-limit": "7.3.0",
+    "tree-sitter-wasms": "0.1.13",
+    "uuid": "14.0.0",
+    "web-tree-sitter": "0.25.10",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.17",
+    "esbuild": "0.28.2",
+    "tsup": "8.5.0",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
+  }
+}

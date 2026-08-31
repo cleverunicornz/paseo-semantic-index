@@ -1,0 +1,28 @@
+FROM ghcr.io/getpaseo/paseo@sha256:53f0eda111f041d2ffed5b8fcfb63c75243cd99ab93f93a11182f49b1c16c82a AS dependencies
+
+WORKDIR /opt/paseo-semantic-index
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
+COPY packages ./packages
+COPY test/fixtures/embedder/package.json ./test/fixtures/embedder/package.json
+RUN corepack pnpm install --frozen-lockfile
+RUN corepack pnpm --filter @cleverunicornz/indexctl build
+COPY test ./test
+RUN mkdir -p /opt/paseo-semantic-index/assets/tree-sitter \
+    && cp packages/engine/node_modules/web-tree-sitter/tree-sitter.wasm /opt/paseo-semantic-index/assets/tree-sitter/tree-sitter.wasm \
+    && cp packages/engine/node_modules/tree-sitter-wasms/out/*.wasm /opt/paseo-semantic-index/assets/tree-sitter/
+
+FROM oven/bun@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4 AS omp
+RUN bun install --global @oh-my-pi/pi-coding-agent@18.0.11
+
+FROM ghcr.io/getpaseo/paseo@sha256:53f0eda111f041d2ffed5b8fcfb63c75243cd99ab93f93a11182f49b1c16c82a
+
+COPY --from=dependencies /opt/paseo-semantic-index /opt/paseo-semantic-index
+COPY --from=omp /usr/local/bin/bun /usr/local/bin/bun
+COPY --from=omp /root/.bun/install/global /opt/omp-global
+COPY test/e2e/paseo-entrypoint.sh /usr/local/bin/paseo-semantic-index-entrypoint
+RUN ln -s /opt/omp-global/node_modules/@oh-my-pi/pi-coding-agent/dist/cli.js /usr/local/bin/omp \
+    && chmod -R a+rX /opt/omp-global \
+    && chmod 0755 /usr/local/bin/paseo-semantic-index-entrypoint
+
+ENV KILO_TREE_SITTER_WASM_DIR=/opt/paseo-semantic-index/assets/tree-sitter
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/paseo-semantic-index-entrypoint"]

@@ -1,0 +1,26 @@
+{
+  "stateDirectory": "/home/paseo/.paseo/semantic-index/state",
+  "cacheDirectory": "/home/paseo/.paseo/semantic-index/cache",
+  "allowedRoots": ["/workspace"],
+  "listen": {
+    "host": "127.0.0.1",
+    "port": 7790
+  },
+  "indexing": {
+    "enabled": true,
+    "provider": "openai-compatible",
+    "model": "deterministic-test-embedding",
+    "dimension": 32,
+    "vectorStore": "qdrant",
+    "openai-compatible": {
+      "baseUrl": "http://embedder:8001/v1"
+    },
+    "qdrant": {
+      "url": "http://qdrant:6333"
+    },
+    "searchMinScore": 0.2,
+    "searchMaxResults": 30,
+    "embeddingBatchSize": 20,
+    "scannerMaxBatchRetries": 3
+  }
+}
