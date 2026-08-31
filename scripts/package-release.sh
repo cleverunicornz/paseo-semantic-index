@@ -59,7 +59,7 @@ cat > "$package_root/BUILD-METADATA.json" <<EOF
 }
 EOF
 
-node "$package_root/packages/indexctl/dist/cli.js" --help >/dev/null
+node "$package_root/packages/indexctl/dist/cli.js" >/dev/null
 
 tar \
   --sort=name \
