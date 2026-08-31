@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
   "name": "paseo-semantic-index",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -15,7 +15,8 @@
     "test": "pnpm --recursive --if-present run test",
     "test:unit": "pnpm --recursive --if-present run test:unit",
     "typecheck": "pnpm --recursive --if-present run typecheck",
-    "verify": "pnpm run typecheck && pnpm run test && pnpm run build"
+    "verify": "pnpm run typecheck && pnpm run test && pnpm run build",
+    "package:linux": "bash scripts/package-release.sh 0.1.0"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
