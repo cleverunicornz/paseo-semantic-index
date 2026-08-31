@@ -1,0 +1,7 @@
+FROM node:20.19.5-alpine3.22
+
+WORKDIR /app
+COPY test/fixtures/embedder/server.mjs /app/server.mjs
+
+EXPOSE 8001
+CMD ["node", "/app/server.mjs"]

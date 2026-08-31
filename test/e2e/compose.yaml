@@ -1,0 +1,67 @@
+name: paseo-semantic-index-e2e
+
+services:
+  qdrant:
+    image: qdrant/qdrant@sha256:94728574965d17c6485dd361aa3c0818b325b9016dac5ea6afec7b4b2700865f
+    environment:
+      QDRANT__SERVICE__API_KEY: e2e-qdrant-api-key
+    volumes:
+      - qdrant-data:/qdrant/storage
+    networks: [qualification]
+
+  embedder:
+    build:
+      context: ../..
+      dockerfile: test/e2e/Dockerfile.embedder
+    environment:
+      EMBEDDING_DIMENSION: "32"
+      PORT: "8001"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8001/healthz').then(r=>{if(!r.ok)process.exit(1)})"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    networks: [qualification]
+
+  paseo:
+    build:
+      context: ../..
+      dockerfile: test/e2e/Dockerfile.paseo
+    depends_on:
+      embedder:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    environment:
+      PASEO_HOST: 127.0.0.1:6767
+      PASEO_PASSWORD: isolated-e2e-password
+      PASEO_RELAY_ENABLED: "false"
+      PASEO_DICTATION_ENABLED: "false"
+      PASEO_VOICE_MODE_ENABLED: "false"
+      SEMANTIC_INDEX_CONFIG_FILE: /opt/paseo-semantic-index/test/e2e/service-config.json
+      SEMANTIC_INDEX_CONTROL_TOKEN: e2e-control-token-value
+      SEMANTIC_INDEX_MCP_TOKEN: e2e-mcp-token-value-only
+      SEMANTIC_INDEX_QDRANT_API_KEY: e2e-qdrant-api-key
+      SEMANTIC_INDEX_URL: http://127.0.0.1:7790
+      ZHIPU_API_KEY: ${ZHIPU_API_KEY:-}
+    ports:
+      - "127.0.0.1:16767:6767"
+    volumes:
+      - paseo-home:/home/paseo/.paseo
+      - workspace:/workspace
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:6767/').then(r=>{if(r.status>=500)process.exit(1)})"]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+    networks: [qualification, agent-egress]
+
+networks:
+  qualification:
+    internal: true
+  agent-egress:
+
+volumes:
+  paseo-home:
+  qdrant-data:
+  workspace:

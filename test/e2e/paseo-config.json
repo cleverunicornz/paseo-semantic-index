@@ -1,0 +1,21 @@
+{
+  "$schema": "https://paseo.sh/schemas/paseo.config.v1.json",
+  "version": 1,
+  "pluginsEnabled": true,
+  "agents": {
+    "providers": {
+      "omp": {
+        "enabled": true
+      }
+    }
+  },
+  "daemon": {
+    "hostnames": ["localhost", "127.0.0.1", "paseo"],
+    "relay": {
+      "enabled": false
+    },
+    "mcp": {
+      "enabled": true
+    }
+  }
+}

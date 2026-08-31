@@ -1,0 +1,5 @@
+export { SemanticIndexService, type SemanticIndexServiceOptions } from "./service"
+export { IndexRegistry, type RegistryOptions } from "./registry"
+export { loadServiceConfig, ServiceConfig, ServiceFileConfig } from "./config"
+export * from "./contracts"
+export type { Logger, ManagedIndex, ManagedIndexFactory } from "./types"

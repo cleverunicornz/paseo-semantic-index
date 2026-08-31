@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "paseo-semantic-index",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "packageManager": "pnpm@10.18.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "pnpm --recursive --if-present run build",
+    "clean": "pnpm --recursive --if-present run clean",
+    "test": "pnpm --recursive --if-present run test",
+    "test:unit": "pnpm --recursive --if-present run test:unit",
+    "typecheck": "pnpm --recursive --if-present run typecheck",
+    "verify": "pnpm run typecheck && pnpm run test && pnpm run build"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@types/node": "20.19.17",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@cleverunicornz/indexctl",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "private": true,
+  "bin": {
+    "indexctl": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsup src/cli.ts src/client.ts --format esm --dts --clean",
+    "clean": "rm -rf dist coverage",
+    "test": "vitest run",
+    "test:unit": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cleverunicornz/semantic-index-service": "workspace:*",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.17",
+    "esbuild": "0.28.2",
+    "tsup": "8.5.0",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
+  }
+}

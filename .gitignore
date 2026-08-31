@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+.artifacts/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+.pnpm-store/
+test/e2e/.state/
+test/e2e/.secrets/

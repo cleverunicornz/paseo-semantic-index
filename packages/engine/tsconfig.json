@@ -1,0 +1,30 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "noUncheckedIndexedAccess": false,
+    "paths": {
+      "bun:test": ["../../node_modules/vitest"]
+    }
+  },
+  "include": ["src/**/*.ts", "vitest.config.ts"],
+  "exclude": [
+    "src/plugin.ts",
+    "src/server/**",
+    "src/headers.ts",
+    "src/indexing/embedders/bedrock.ts",
+    "src/indexing/embedders/gemini.ts",
+    "src/indexing/embedders/kilo.ts",
+    "src/indexing/embedders/mistral.ts",
+    "src/indexing/embedders/ollama.ts",
+    "src/indexing/embedders/openai.ts",
+    "src/indexing/embedders/openrouter.ts",
+    "src/indexing/embedders/vercel-ai-gateway.ts",
+    "src/indexing/embedders/voyage.ts",
+    "src/indexing/vector-store/lancedb-loader.ts",
+    "src/indexing/vector-store/lancedb-vector-store.ts"
+  ]
+}

@@ -8,8 +8,24 @@ Kilo agent harness from the runtime boundary, and exposes the engine to any
 Paseo-managed agent through Model Context Protocol (MCP). The first target is
 Oh My Pi (OMP), but the indexing service is deliberately harness-independent.
 
-> **Status:** architecture and repository bootstrap. No production package or
-> compatibility guarantee exists yet.
+> **Status:** functional pre-release implementation. The engine, service,
+> control CLI, MCP tools, Paseo plugin runtime, dashboard, workspace panel, and
+> isolated qualification environment are implemented. Fleet deployment and a
+> compatibility guarantee remain outside this repository's current scope.
+
+## Implemented Surface
+
+- Kilo-derived Qdrant indexing with OpenAI-compatible embeddings;
+- primary-checkout baselines and changed-file worktree overlays;
+- persistent manager registrations, baseline-first restoration, and watcher
+  cleanup;
+- authenticated loopback control API and `indexctl`;
+- Streamable HTTP MCP with `semantic_search` and `index_status`;
+- OMP workspace binding through MCP `roots/list`;
+- Paseo plugin lifecycle, typed RPC, global dashboard, workspace panel, and
+  Command Center entries;
+- deterministic Docker qualification with real Git worktrees, Qdrant, an
+  OpenAI-compatible embedder, pinned Paseo, and pinned OMP.
 
 ## Why This Exists
 
@@ -94,6 +110,10 @@ service around it.
 8. **One runtime serves one security identity.** Each runner user or
    interactive user gets its own Paseo daemon, plugin process, cache, token,
    and manager registry.
+9. **One Qdrant cell serves one daemon identity.** Qdrant processes may share a
+   physical index host, but collections, credentials, storage, and failure
+   boundaries never cross daemon cells. Cross-daemon baseline deduplication is
+   deliberately absent.
 
 ## System Context
 
@@ -117,7 +137,7 @@ Paseo Semantic Index plugin subprocess
                |
                | embeddings and vectors
                v
-        Embedder service and Qdrant
+         Assigned embedder and dedicated Qdrant cell
 
 Paseo-managed OMP agent
         |
@@ -146,6 +166,22 @@ Physical host
 The same plugin can run under an interactive user's Paseo daemon. Code and UI
 remain identical; configuration supplies identity-specific paths, credentials,
 ports, and limits.
+
+Each daemon points at its own Qdrant instance. Several independent Qdrant
+containers can be placed on one index-services machine while retaining unique
+ports, data directories, API keys, resource limits, and disk quotas. The
+embedding endpoint may be shared by several cells because it is stateless.
+
+```text
+Index-services host
+|-- Qdrant cell A <--- Paseo daemon A plugin
+|-- Qdrant cell B <--- Paseo daemon B plugin
+|-- Qdrant cell C <--- Paseo daemon C plugin
+`-- shared OpenAI-compatible embedder
+```
+
+Collection names therefore need to be unique only inside one cell. The
+Kilo-derived path hash remains valid without a fleet namespace.
 
 Paseo plugins are trusted, unsandboxed code. Backend contributions can access
 the daemon user's files, processes, credentials, and network. This plugin must
@@ -456,55 +492,50 @@ The service exposes three deliberately different surfaces.
 
 Transport: Streamable HTTP bound to loopback.
 
-Initial tools:
+Implemented tools:
 
 ```text
 semantic_search
 index_status
 ```
 
-Conceptual search input:
+Search input:
 
 ```json
 {
   "query": "Where is authentication configured?",
   "path": "src",
-  "limit": 20
+  "maxResults": 20
 }
 ```
 
-Conceptual result:
+Result:
 
 ```json
 {
-  "status": "ready",
+  "workspace": "project-worktree",
+  "state": "Indexed",
   "results": [
     {
-      "path": "src/auth/config.ts",
+      "filePath": "src/auth/config.ts",
       "startLine": 12,
       "endLine": 48,
       "score": 0.82,
-      "content": "..."
+      "codeChunk": "..."
     }
   ]
 }
 ```
 
-The workspace binding must not be a model-selected absolute path. The preferred
-binding order is:
-
-1. MCP roots or connection metadata supplied by the OMP client, after support
-   is verified;
-2. an opaque workspace registration ID injected into the agent's MCP
-   configuration;
-3. a service-issued scoped token bound to one workspace registration.
-
-This binding is an implementation decision that must be proven with OMP before
-the MCP contract is frozen.
+The workspace binding is not a model-selected absolute path. The service asks
+the connected client for `roots/list`, canonicalizes file roots, and requires
+exactly one root already present in the manager registry. OMP and its child
+agents share the parent MCP manager, so the root remains bound to the selected
+Paseo workspace.
 
 ### Lifecycle And Control API
 
-The control API is not exposed to ordinary agents. A provisional HTTP shape is:
+The control API is not exposed to ordinary agents. Its HTTP surface is:
 
 ```text
 PUT    /v1/registrations/:id
@@ -512,8 +543,11 @@ GET    /v1/registrations/:id
 DELETE /v1/registrations/:id
 POST   /v1/registrations/:id/reindex
 POST   /v1/registrations/:id/purge
-GET    /v1/health
 GET    /v1/status
+GET    /v1/registrations
+POST   /v1/search
+GET    /v1/operations/:id
+GET    /healthz
 ```
 
 `indexctl` is a thin client:
@@ -524,7 +558,7 @@ indexctl status --wait
 indexctl release
 indexctl reindex
 indexctl purge
-indexctl health
+indexctl service-status
 ```
 
 Native Paseo plugin CLI contributions may replace or wrap these commands once
@@ -536,15 +570,14 @@ Typed, schema-validated plugin RPC supplies the Paseo client interface. It can
 read status and perform authenticated administrative actions without exposing
 credentials to client code.
 
-Candidate RPC methods:
+Implemented RPC methods:
 
 ```text
-index.status
-index.workspace.status
-index.workspace.reindex
-index.workspace.purge
-index.health
-index.errors.list
+semantic-index.status
+semantic-index.workspace-status
+semantic-index.register
+semantic-index.release
+semantic-index.reindex
 ```
 
 Plugin RPC is scoped to the selected Paseo host. It is not used as the agent
@@ -558,17 +591,12 @@ The plugin contributes one global surface and one contextual workspace panel.
 
 The sidebar surface shows the selected daemon's indexing runtime:
 
-- plugin and engine version;
-- Qdrant and embedder health;
-- registered primary projects;
-- active worktree overlays;
-- ready, indexing, waiting, failed, and stopped counts;
-- files and chunks indexed;
-- active watcher and manager counts;
-- current indexing operations;
-- last successful update;
-- recent errors;
-- stale registrations and orphan candidates.
+- service version, phase, and current message;
+- active index-manager count;
+- active MCP-session count;
+- registered primary projects and worktree overlays;
+- indexing state and progress for each registration;
+- current file counters and recent registration errors.
 
 When the same plugin is installed on several connected daemons, Paseo provides
 a host picker. The dashboard is intentionally host-scoped. Fleet aggregation
@@ -579,24 +607,19 @@ is not required for the initial service.
 The workspace panel shows:
 
 - registration and manager state;
-- primary baseline path and collection;
-- worktree overlay path and collection;
-- watcher status;
-- indexing progress;
-- changed, shadowed, and deleted file counts where available;
-- last indexed event;
-- current and recent failures;
-- reindex and purge controls with confirmation.
+- baseline or worktree-overlay role;
+- indexing progress and file counters;
+- current failures;
+- registration, reindex, and release controls;
+- explicit confirmation before release.
 
 ### Command Center
 
-Initial actions may include:
+Implemented actions are:
 
 ```text
 Open indexing dashboard
 Open workspace index status
-Reindex current workspace
-Purge released workspace overlay
 ```
 
 Destructive operations require explicit human confirmation and remain absent
@@ -611,7 +634,7 @@ a standalone indexing engine and host helper package.
 It is not currently published to npm. Its package metadata also contains
 monorepo-only dependency references such as `workspace:*` and `catalog:`.
 
-The extraction plan is:
+The extraction performed was:
 
 1. Record the exact donor repository and commit.
 2. Preserve Kilo Code and OpenCode copyright and MIT notices.
@@ -627,19 +650,20 @@ The extraction plan is:
 
 The objective is extraction and packaging, not algorithmic redesign.
 
-## Proposed Repository Layout
+## Repository Layout
 
 ```text
 .
 |-- packages/
 |   |-- engine/          # Kilo-derived indexing engine
+|   |-- service/         # registry, control API, and Streamable HTTP MCP
 |   |-- paseo-plugin/    # backend process and Paseo client surfaces
-|   |-- mcp/             # MCP contracts and Streamable HTTP transport
 |   `-- indexctl/        # deterministic lifecycle CLI
 |-- test/
-|   |-- parity/
-|   |-- integration/
-|   `-- fixtures/
+|   |-- e2e/             # isolated Paseo/Qdrant/OMP qualification
+|   `-- fixtures/        # deterministic OpenAI-compatible embedder
+|-- scripts/
+|   `-- e2e.sh
 |-- LICENSE
 |-- THIRD_PARTY_NOTICES.md
 |-- package.json
@@ -647,9 +671,9 @@ The objective is extraction and packaging, not algorithmic redesign.
 `-- README.md
 ```
 
-The exact package split may change after a spike proves how Paseo's plugin
-compiler handles the engine's WASM, native, and generated assets. Public APIs
-should be frozen only after that qualification.
+Paseo's plugin compiler successfully bundles the TypeScript dependencies.
+Tree-sitter runtime and language WASM files are shipped as explicit assets and
+resolved through `KILO_TREE_SITTER_WASM_DIR`.
 
 ## Security Model
 
@@ -790,13 +814,12 @@ restore, but correctness cannot depend on retained overlays.
 The public project defines schemas and generic defaults. Deployment-specific
 values stay in the consuming infrastructure repository.
 
-Expected configuration categories:
+Implemented configuration categories:
 
 ```text
 service
-  bind address
-  MCP port
-  control port or shared listener
+  loopback bind address and shared listener port
+  independent MCP and control bearer tokens
   state and cache directories
   allowed roots
 
@@ -812,15 +835,404 @@ embedder
   batch and concurrency limits
 
 indexing
-  include and exclude rules
-  chunking settings
-  watcher debounce
-  concurrency limits
-  retention policy
+  search thresholds and result limits
+  embedding batch size and retry limit
+  optional file-extension allowlist
 ```
 
 No real hostnames, runner identities, organization repository policy, tailnet
 details, or credentials belong in this repository.
+
+Configuration is loaded from `SEMANTIC_INDEX_CONFIG_FILE`. Secrets override
+file values through:
+
+```text
+SEMANTIC_INDEX_CONTROL_TOKEN
+SEMANTIC_INDEX_CONTROL_TOKEN_FILE
+SEMANTIC_INDEX_MCP_TOKEN
+SEMANTIC_INDEX_MCP_TOKEN_FILE
+SEMANTIC_INDEX_QDRANT_API_KEY
+SEMANTIC_INDEX_QDRANT_API_KEY_FILE
+SEMANTIC_INDEX_EMBEDDER_API_KEY
+SEMANTIC_INDEX_EMBEDDER_API_KEY_FILE
+```
+
+Direct values take precedence over files. File-based secrets are recommended
+for long-lived installations; direct values are convenient for disposable
+qualification environments.
+
+## Infrastructure Handoff
+
+This section is the installation and lifecycle contract for an infrastructure
+implementation. Fleet topology, user creation, system services, Qdrant
+placement, and repository policy remain outside this repository.
+
+### Cell Contract
+
+One semantic-index cell belongs to exactly one Paseo daemon identity:
+
+```text
+Paseo daemon identity
+|-- one semantic-index plugin process
+|-- one state directory
+|-- one cache directory
+|-- one control token
+|-- one MCP token
+`-- one dedicated Qdrant instance
+```
+
+An embedder may be shared by multiple cells. A Qdrant instance may not be
+shared across cells. Several independent Qdrant containers may run on one
+physical index host, provided they have separate ports, credentials, storage
+directories, resource limits, and disk quotas.
+
+The plugin never performs cross-daemon discovery, query routing, or baseline
+deduplication. The selected Paseo daemon, its plugin, its Qdrant instance, and
+its registered paths form one failure and security boundary.
+
+### Required Software
+
+- Paseo `0.6.1` or a qualified newer release;
+- Node.js 20 or newer;
+- pnpm `10.18.0` through Corepack;
+- Qdrant `1.17.1` or a qualified compatible release;
+- an OpenAI-compatible embedding endpoint;
+- OMP `18.0.11` or a qualified newer release when OMP consumes MCP;
+- Git for source installation and worktree operation.
+
+The Qdrant REST endpoint and embedder must be reachable from the Paseo daemon
+host. The MCP and control listener remains on daemon-local loopback.
+
+### Suggested Filesystem Layout
+
+Paths are examples. Infrastructure may use different deterministic roots.
+
+```text
+/opt/paseo-semantic-index/                 pinned source checkout
+/opt/paseo-semantic-index-assets/          tree-sitter WASM assets
+/etc/paseo-semantic-index/<daemon>/        non-secret service configuration
+/run/secrets/paseo-semantic-index/<daemon>/
+|-- control-token
+|-- mcp-token
+|-- qdrant-api-key
+`-- embedder-api-key
+/var/lib/paseo-semantic-index/<daemon>/
+|-- state/
+`-- cache/
+```
+
+The source and asset directories must be readable by the daemon user. State
+and cache directories must be writable by that user. Secret files should be
+owned by the daemon user with mode `0600`.
+
+### Install A Pinned Source Revision
+
+Install from a tag or full commit rather than a moving branch:
+
+```bash
+git clone https://github.com/cleverunicornz/paseo-semantic-index.git \
+  /opt/paseo-semantic-index
+git -C /opt/paseo-semantic-index checkout <tag-or-full-commit>
+
+corepack pnpm --dir /opt/paseo-semantic-index install --frozen-lockfile
+corepack pnpm --dir /opt/paseo-semantic-index \
+  --filter @cleverunicornz/indexctl build
+chmod 0755 /opt/paseo-semantic-index/packages/indexctl/dist/cli.js
+ln -sfn /opt/paseo-semantic-index/packages/indexctl/dist/cli.js \
+  /usr/local/bin/indexctl
+```
+
+Paseo compiles the plugin TypeScript from the installed source path. Keep the
+checkout and its installed workspace dependencies in place while the plugin is
+configured.
+
+### Install Tree-Sitter Assets
+
+The Paseo plugin compiler bundles JavaScript but does not copy language WASM
+files. Stage them explicitly:
+
+```bash
+install -d -m 0755 /opt/paseo-semantic-index-assets/tree-sitter
+
+install -m 0644 \
+  /opt/paseo-semantic-index/packages/engine/node_modules/web-tree-sitter/tree-sitter.wasm \
+  /opt/paseo-semantic-index-assets/tree-sitter/tree-sitter.wasm
+
+install -m 0644 \
+  /opt/paseo-semantic-index/packages/engine/node_modules/tree-sitter-wasms/out/*.wasm \
+  /opt/paseo-semantic-index-assets/tree-sitter/
+```
+
+Set `KILO_TREE_SITTER_WASM_DIR` to that directory. Missing language assets make
+the parser fall back to less precise chunking and should fail deployment
+qualification.
+
+### Create The Service Configuration
+
+Create one JSON file per daemon identity. Do not place credentials in it:
+
+```json
+{
+  "stateDirectory": "/var/lib/paseo-semantic-index/runner-01/state",
+  "cacheDirectory": "/var/lib/paseo-semantic-index/runner-01/cache",
+  "allowedRoots": [
+    "/srv/paseo/projects",
+    "/home/runner-01/.paseo/worktrees"
+  ],
+  "listen": {
+    "host": "127.0.0.1",
+    "port": 7790
+  },
+  "indexing": {
+    "enabled": true,
+    "provider": "openai-compatible",
+    "model": "qwen3-embedding-4b-fp8",
+    "dimension": 2560,
+    "vectorStore": "qdrant",
+    "openai-compatible": {
+      "baseUrl": "https://embedder.example.invalid/v1"
+    },
+    "qdrant": {
+      "url": "https://qdrant-cell-runner-01.example.invalid"
+    },
+    "searchMinScore": 0.4,
+    "searchMaxResults": 50,
+    "embeddingBatchSize": 20,
+    "scannerMaxBatchRetries": 3
+  }
+}
+```
+
+Every configured allowed root must exist when the plugin starts. Paths are
+resolved with `realpath`; registrations outside these roots are rejected.
+Include both stable project-checkout roots and Paseo's managed-worktree root.
+
+The embedding dimension must match the configured model. Changing model,
+dimension, embedder identity, or vector-store compatibility profile requires a
+controlled cell reindex.
+
+### Create Secrets And Daemon Environment
+
+Generate independent MCP and control tokens:
+
+```bash
+umask 077
+openssl rand -hex 32 > /run/secrets/paseo-semantic-index/runner-01/control-token
+openssl rand -hex 32 > /run/secrets/paseo-semantic-index/runner-01/mcp-token
+```
+
+Supply Qdrant and embedder credentials through equivalent mode-`0600` files.
+The Paseo daemon process must pass these variables to the plugin subprocess:
+
+```text
+SEMANTIC_INDEX_CONFIG_FILE=/etc/paseo-semantic-index/runner-01/config.json
+SEMANTIC_INDEX_CONTROL_TOKEN_FILE=/run/secrets/paseo-semantic-index/runner-01/control-token
+SEMANTIC_INDEX_MCP_TOKEN_FILE=/run/secrets/paseo-semantic-index/runner-01/mcp-token
+SEMANTIC_INDEX_QDRANT_API_KEY_FILE=/run/secrets/paseo-semantic-index/runner-01/qdrant-api-key
+SEMANTIC_INDEX_EMBEDDER_API_KEY_FILE=/run/secrets/paseo-semantic-index/runner-01/embedder-api-key
+KILO_TREE_SITTER_WASM_DIR=/opt/paseo-semantic-index-assets/tree-sitter
+```
+
+`indexctl` additionally reads:
+
+```text
+SEMANTIC_INDEX_URL=http://127.0.0.1:7790
+SEMANTIC_INDEX_CONTROL_TOKEN_FILE=/run/secrets/paseo-semantic-index/runner-01/control-token
+```
+
+Paseo providers normally execute as the same Unix identity as the daemon. A
+mode-`0600` secret file prevents access by other operating-system users but is
+not a sandbox against a fully privileged agent running as that same identity.
+The architecture keeps credentials outside model arguments and agent tools; a
+deployment requiring stronger confidentiality must use a separate service
+identity or equivalent operating-system isolation.
+
+If the daemon service environment changes, restart that daemon during a safe
+maintenance boundary so the plugin and subsequently launched providers inherit
+the new values. A normal plugin source update with unchanged environment needs
+only `paseo plugin reload`.
+
+### Enable And Install The Paseo Plugin
+
+Paseo plugins are trusted, unsandboxed code. Enable them only on the intended
+daemon by setting this root field in that daemon's `config.json`:
+
+```json
+{
+  "pluginsEnabled": true
+}
+```
+
+Reload the daemon configuration, install the absolute plugin path, and verify
+the runtime ID:
+
+```bash
+paseo reload --json
+paseo plugin install /opt/paseo-semantic-index/packages/paseo-plugin
+paseo plugin ls
+paseo plugin logs paseo-semantic-index
+```
+
+The plugin can report `running` before its asynchronous service restoration is
+complete. Poll service status before admitting work:
+
+```bash
+export SEMANTIC_INDEX_URL=http://127.0.0.1:7790
+export SEMANTIC_INDEX_CONTROL_TOKEN_FILE=/run/secrets/paseo-semantic-index/runner-01/control-token
+
+node /opt/paseo-semantic-index/packages/indexctl/dist/cli.js service-status
+```
+
+Require service phase `ready`. Treat phase `degraded`, an absent listener, or a
+failed plugin status as a preflight failure. Current Paseo releases do not
+automatically restart a crashed plugin process; use `paseo plugin reload
+paseo-semantic-index` for bounded recovery.
+
+### Configure OMP MCP
+
+Create `~/.omp/agent/mcp.json` for the daemon user, or the corresponding named
+profile file when OMP profiles are used:
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/coding-agent/src/config/mcp-schema.json",
+  "mcpServers": {
+    "semantic-index": {
+      "type": "http",
+      "url": "http://127.0.0.1:7790/mcp",
+      "headers": {
+        "Authorization": "!cat /run/secrets/paseo-semantic-index/runner-01/mcp-token"
+      },
+      "timeout": 120000
+    }
+  }
+}
+```
+
+OMP executes the `!cat` indirection at discovery time and does not require the
+literal token in project files. `${SEMANTIC_INDEX_MCP_TOKEN}` expansion is also
+supported when the token is deliberately supplied to the provider process.
+
+OMP advertises its current workspace through MCP `roots/list`. The service
+accepts search only when exactly one advertised file root resolves to an active
+registration. Agents never pass absolute workspace paths to `semantic_search`.
+
+### Register Projects And Worktrees
+
+Automation should use IDs and paths returned by Paseo rather than reconstructing
+managed-worktree paths.
+
+Register and warm each persistent project baseline:
+
+```bash
+indexctl register \
+  --id "$PROJECT_ID:primary" \
+  --path "$PROJECT_ROOT" \
+  --wait \
+  --timeout 30m
+```
+
+After Paseo creates a workspace, register its overlay against that baseline:
+
+```bash
+indexctl register \
+  --id "$WORKSPACE_ID" \
+  --path "$WORKSPACE_PATH" \
+  --baseline "$PROJECT_ROOT" \
+  --wait \
+  --timeout 30m
+```
+
+The baseline registration must exist first. Worktree registration is rejected
+when its primary is absent. Once ready, launch OMP in that exact Paseo
+workspace.
+
+Release and purge the overlay after all agents and searches have stopped:
+
+```bash
+indexctl release --id "$WORKSPACE_ID" --purge
+```
+
+Keep the project baseline registered for future work. When a project is
+retired, remove its final reference and optionally delete its collection:
+
+```bash
+indexctl release --id "$PROJECT_ID:primary" --purge
+```
+
+Until Paseo exposes plugin workspace-lifecycle hooks, put these calls in the
+automation wrapper or repository `paseo.json` setup and teardown scripts. A
+workflow wrapper is preferred when infrastructure policy should remain outside
+application repositories.
+
+### Verify A Cell
+
+Minimum post-install checks are:
+
+```bash
+paseo plugin ls
+paseo plugin logs paseo-semantic-index
+indexctl service-status
+indexctl list
+indexctl status --id "$PROJECT_ID:primary" --wait --timeout 30m
+indexctl search --id "$PROJECT_ID:primary" --query "known repository concept"
+```
+
+Also verify:
+
+- Qdrant reports collections prefixed with `ws-`;
+- the primary collection remains after ordinary registration release;
+- a worktree collection disappears after `release --purge`;
+- plugin logs contain no tree-sitter WASM initialization errors;
+- OMP lists `mcp__semantic_index_semantic_search` and
+  `mcp__semantic_index_index_status`;
+- a Paseo-managed OMP agent calls semantic search in its registered workspace;
+- the global dashboard and workspace panel render on the selected daemon host.
+
+Run the repository's container qualification before promoting a new revision:
+
+```bash
+bash scripts/e2e.sh
+```
+
+The optional credentialed OMP path is enabled by supplying `ZHIPU_API_KEY` only
+to that disposable command environment.
+
+### Upgrade, Roll Back, And Remove
+
+For an upgrade:
+
+1. Stop admitting new work to the cell.
+2. Fetch and check out the pinned release revision.
+3. Run `corepack pnpm install --frozen-lockfile` and rebuild `indexctl`.
+4. Restage the tree-sitter assets.
+5. Run `paseo plugin reload paseo-semantic-index`.
+6. Require service phase `ready` and wait for restored registrations.
+7. Run a known semantic query before returning the cell to service.
+
+For rollback, restore the previous source revision, dependencies, and assets,
+then reload the plugin. Registration metadata, caches, and Qdrant collections
+survive normal plugin reloads.
+
+For removal, release active worktrees first, decide explicitly whether baseline
+collections should remain, run `paseo plugin remove paseo-semantic-index`, and
+then remove local state only after verifying no registrations are needed.
+
+## Development And Qualification
+
+```bash
+pnpm install --frozen-lockfile
+pnpm run verify
+bash scripts/e2e.sh
+```
+
+The E2E script builds its own Paseo image and creates disposable named volumes,
+networks, Qdrant data, Git repositories, and worktrees. It never invokes or
+mounts the host Paseo daemon. The cleanup trap removes the complete stack.
+
+Supplying `ZHIPU_API_KEY` additionally qualifies pinned OMP directly and
+through `paseo run --provider omp`. The key is passed only as container runtime
+environment and is not written into source, fixtures, images, or artifacts.
 
 ## Distribution
 
@@ -830,6 +1242,12 @@ plugin code benefits from inspection.
 Initial distribution does not require npm publication. Infrastructure can
 deploy a pinned Git commit or release artifact, install dependencies, and run
 `paseo plugin install` against an absolute path.
+
+npm publication is not required for fleet deployment and should not block the
+initial infrastructure integration. Paseo installs this plugin from its source
+directory, and `indexctl` is built as a local executable. Publishing the engine
+or CLI can be evaluated after their compatibility surface and release process
+stabilize.
 
 Once package boundaries stabilize, candidates include:
 
@@ -849,6 +1267,27 @@ Release requirements include:
 - an SBOM where practical;
 - trusted-branch publishing with OIDC;
 - public-fork CI that cannot reach private runner fleets or secrets.
+
+## Qualification Evidence
+
+The current revision has passed:
+
+- 78 Kilo-derived engine parity tests;
+- 9 service, configuration, persistence, and lifecycle tests;
+- 1 `indexctl` client test;
+- repository-wide TypeScript checks and production builds;
+- production dependency vulnerability and license checks;
+- isolated plugin installation and reload against Paseo `0.6.1`;
+- primary indexing and worktree edit, delete, revert, and shadow behavior;
+- direct MCP roots, tool listing, status, and semantic search;
+- Qdrant worktree-overlay purge while retaining the baseline collection;
+- direct OMP `18.0.11` semantic search with filesystem tools disabled;
+- Paseo-managed OMP semantic search verified in its tool timeline;
+- wide and compact web dashboard and workspace-panel interaction.
+
+The qualification environment used disposable Docker containers, volumes,
+networks, credentials, repositories, and worktrees. It did not use the host
+Paseo daemon.
 
 ## Testing Strategy
 
@@ -909,6 +1348,11 @@ Release requirements include:
 
 ## Delivery Phases
 
+The functional scope of phases 0 through 5 is implemented. The evidence above
+records the tested surfaces; native mobile clients, long-duration soak, and
+fleet-scale load remain outside the current qualification. Phase 6 is owned by
+consuming infrastructure. Phase 7 remains future upstream evolution.
+
 ### Phase 0: Architecture And Provenance
 
 - establish this public repository;
@@ -950,7 +1394,8 @@ Release requirements include:
 - implement global indexing dashboard;
 - implement workspace index panel;
 - add safe Command Center actions;
-- verify desktop, mobile, compact, and theme behavior.
+- verify wide and compact web behavior;
+- qualify native mobile and additional themes before claiming those surfaces.
 
 ### Phase 6: Lifecycle And Deployment
 
@@ -959,6 +1404,9 @@ Release requirements include:
 - deploy one plugin per daemon identity;
 - add qualification, monitoring, and orphan cleanup;
 - publish pinned release artifacts.
+
+These deployment tasks are not performed by this repository's code-validation
+workflow.
 
 ### Phase 7: Upstream Evolution
 
@@ -986,13 +1434,6 @@ The first production-capable release is complete when:
 
 ## Open Decisions
 
-- The final MCP workspace-binding mechanism supported by OMP.
-- Whether MCP and control share one HTTP listener with separate authorization
-  scopes or use separate listeners.
-- How the Paseo plugin compiler packages tree-sitter WASM and optional native
-  vector-store dependencies.
-- Whether to split the engine, plugin, MCP, and CLI into separately published
-  packages after the initial spike.
 - The default worktree overlay retention period.
 - The bounded recovery policy for an unexpected plugin-process crash.
 - Whether a future fleet-wide summary is valuable beyond Paseo's host picker.
