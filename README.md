@@ -10,8 +10,8 @@ Oh My Pi (OMP), but the indexing service is deliberately harness-independent.
 
 > **Status:** functional pre-release implementation. The engine, service,
 > control CLI, MCP tools, Paseo plugin runtime, dashboard, workspace panel, and
-> isolated qualification environment are implemented. Fleet deployment and a
-> compatibility guarantee remain outside this repository's current scope.
+> isolated qualification environment are implemented. CI produces an immutable
+> Linux deployment package; fleet topology remains outside this repository.
 
 ## Implemented Surface
 
@@ -925,42 +925,30 @@ The source and asset directories must be readable by the daemon user. State
 and cache directories must be writable by that user. Secret files should be
 owned by the daemon user with mode `0600`.
 
-### Install A Pinned Source Revision
+### Install A Pinned Package
 
-Install from a tag or full commit rather than a moving branch:
+Application CI publishes one ready-to-extract Linux package and checksum per
+release tag. Infrastructure verifies the checksum and never runs package
+installation or compilation on fleet hosts:
 
 ```bash
-git clone https://github.com/cleverunicornz/paseo-semantic-index.git \
-  /opt/paseo-semantic-index
-git -C /opt/paseo-semantic-index checkout <tag-or-full-commit>
-
-corepack pnpm --dir /opt/paseo-semantic-index install --frozen-lockfile
-corepack pnpm --dir /opt/paseo-semantic-index \
-  --filter @cleverunicornz/indexctl build
-chmod 0755 /opt/paseo-semantic-index/packages/indexctl/dist/cli.js
+sha256sum --check paseo-semantic-index-v0.1.0-linux-x64.tar.gz.sha256
+tar -xzf paseo-semantic-index-v0.1.0-linux-x64.tar.gz -C /opt
 ln -sfn /opt/paseo-semantic-index/packages/indexctl/dist/cli.js \
   /usr/local/bin/indexctl
 ```
 
-Paseo compiles the plugin TypeScript from the installed source path. Keep the
-checkout and its installed workspace dependencies in place while the plugin is
-configured.
+The package contains the pinned source, installed dependency closure, built
+`indexctl`, tree-sitter WASM assets, license/provenance files, and build
+metadata. Paseo compiles plugin TypeScript from this immutable installed path.
 
-### Install Tree-Sitter Assets
+### Use Packaged Tree-Sitter Assets
 
 The Paseo plugin compiler bundles JavaScript but does not copy language WASM
-files. Stage them explicitly:
+files. The package stages them at a stable path:
 
 ```bash
-install -d -m 0755 /opt/paseo-semantic-index-assets/tree-sitter
-
-install -m 0644 \
-  /opt/paseo-semantic-index/packages/engine/node_modules/web-tree-sitter/tree-sitter.wasm \
-  /opt/paseo-semantic-index-assets/tree-sitter/tree-sitter.wasm
-
-install -m 0644 \
-  /opt/paseo-semantic-index/packages/engine/node_modules/tree-sitter-wasms/out/*.wasm \
-  /opt/paseo-semantic-index-assets/tree-sitter/
+export KILO_TREE_SITTER_WASM_DIR=/opt/paseo-semantic-index/assets/tree-sitter
 ```
 
 Set `KILO_TREE_SITTER_WASM_DIR` to that directory. Missing language assets make
@@ -1239,9 +1227,10 @@ environment and is not written into source, fixtures, images, or artifacts.
 The repository is public because the implementation is generic and trusted
 plugin code benefits from inspection.
 
-Initial distribution does not require npm publication. Infrastructure can
-deploy a pinned Git commit or release artifact, install dependencies, and run
-`paseo plugin install` against an absolute path.
+Initial distribution does not require npm publication. Application CI builds
+and publishes `paseo-semantic-index-v<version>-linux-x64.tar.gz` plus its
+SHA-256 receipt. Infrastructure deploys that immutable artifact and runs
+`paseo plugin install` against its absolute path.
 
 npm publication is not required for fleet deployment and should not block the
 initial infrastructure integration. Paseo installs this plugin from its source
